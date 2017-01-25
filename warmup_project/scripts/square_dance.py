@@ -20,7 +20,7 @@ class SquareDance(object):
 		self.starting_position = None
 		self.starting_orientation = None
 
-		self.running = True
+		self.running = False
 
 		rospy.init_node('square_dance')
 
@@ -38,7 +38,6 @@ class SquareDance(object):
 		yaw = euler[2]
 		return np.array([roll, pitch, yaw])
 
-
 	def stop(self):
 		self.publisher.publish(
 			Twist(linear=Vector3(0.0, 0.0, 0.0))
@@ -49,7 +48,7 @@ class SquareDance(object):
 		self.right_front_triggered = msg.rightFront
 
 	def update_odometry(self, msg):
-		if self.position is None:
+		if self.position is None or self.orientation is None:
 			pos = msg.pose.pose.position
 			self.starting_position = np.array([pos.x, pos.y, pos.z])
 			quat = msg.pose.pose.orientation
@@ -57,13 +56,27 @@ class SquareDance(object):
 		current_pos = msg.pose.pose.position
 		self.position = np.array([current_pos.x, current_pos.y, current_pos.z]) - self.starting_position
 		current_quat = msg.pose.pose.orientation
-		self.orientation = self.convert_to_euler(current_quat.x, current_quat.y, current_quat.z, current_quat.w) - self.starting_orientation
+		self.orientation = self.convert_to_euler(current_quat.x, current_quat.y, current_quat.z, current_quat.w)
+
+		if not self.running:
+			self.running = True
 	
+	def basic_version():
+		pass
+
 	def run(self):
 		r = rospy.Rate(50)
+		while not self.running:
+			r.sleep()
+
+
 		while not rospy.is_shutdown() and self.running:
-			#fwd_msg = Twist(linear=Vector3(1.0, 0.0, 0.0))
-			#self.publisher.publish(fwd_msg)
+			if self.position[0] < 1.0:
+				fwd_msg = Twist(linear=Vector3(1.0, 0.0, 0.0))
+				self.publisher.publish(fwd_msg)
+			else:
+				self.stop()
+
 
 			#if self.left_front_triggered == 1 or self.right_front_triggered == 1:
 			#	self.running = False
