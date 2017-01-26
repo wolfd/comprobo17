@@ -74,8 +74,11 @@ class SquareDance(object):
         if not self.running:
             self.running = True
     
+    def get_angle(self):
+        return -self.starting_orientation[2]
+
     def transform_to_odom(self, destination_base_link):
-        theta = -self.starting_orientation[2]
+        theta = self.get_angle()
         print theta
         rot = np.matrix([[np.cos(theta), -1*np.sin(theta), 0],
                         [np.sin(theta) ,    np.cos(theta), 0], 
@@ -87,35 +90,62 @@ class SquareDance(object):
     def distance_to(self, point):
         return np.linalg.norm(point - self.position)
 
-    def run(self):
+    def go_forward(self, distance=1.0):
         r = rospy.Rate(50)
-        # Wait for the first odometry position update to come in
-        while not self.running:
-            r.sleep()
-
         destination_odom = self.transform_to_odom(np.array([1.0, 0.0, 0.0]))
         print destination_odom
 
         while not rospy.is_shutdown() and self.running:
-            print destination_odom
-            flattened_destination = destination_odom.squeeze()
-            print flattened_destination
-            self.publish_destination(destination_odom[0, 0], destination_odom[0, 1], destination_odom[0, 2])
             print self.position
-            print self.distance_to(destination_odom)
+            self.publish_destination(destination_odom[0, 0], destination_odom[0, 1], destination_odom[0, 2])
             if self.distance_to(self.starting_position) < 1.0:
                 fwd_msg = Twist(linear=Vector3(1.0, 0.0, 0.0))
                 self.publisher.publish(fwd_msg)
             else:
                 self.stop()
-
-
-            #if self.left_front_triggered == 1 or self.right_front_triggered == 1:
-            #   self.running = False
-
-            # print(self.position, self.orientation)
+                return
             r.sleep()
+
+    def is_turning_right(self, starting_angle, final_angle):
+        return final_angle - starting_angle > math.pi
+
+    def delta_angle(self, a, b):
+        return ((b - a) + math.pi) % (math.pi * 2.0) - math.pi
+
+    def rotate(self, angle):
+        r = rospy.Rate(50)
+
+        starting_angle = self.get_angle()
+        final_angle = starting_angle + angle
+        direction = 1 if self.is_turning_right(starting_angle, final_angle) else -1
+
+        print('direction is ' + str(direction))
+        print('starting angle is ' + str(starting_angle))
+        print('final angle is ' + str(final_angle))
+
+
+
+        while not rospy.is_shutdown() and self.running:
+            if self.delta_angle(self.get_angle(), final_angle) >= math.pi / 16.0:
+                turn_msg = Twist(angular=Vector3(0.0, 0.0, direction))
+                self.publisher.publish(turn_msg)
+            else:
+                self.stop()
+                return
+            r.sleep()
+
+
+
+    def run(self):
+        r = rospy.Rate(50)
+
+        # Wait for the first odometry position update to come in
+        while not self.running:
+            r.sleep()
+
+        self.go_forward()
+        self.rotate(math.pi / 2.0)
         
-        self.stop()
+        print('done!')
 
 SquareDance().run()
