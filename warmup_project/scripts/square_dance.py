@@ -53,7 +53,7 @@ class SquareDance(object):
 
     def stop(self):
         self.publisher.publish(
-            Twist(linear=Vector3(0.0, 0.0, 0.0))
+            Twist(linear=Vector3(0.0, 0.0, 0.0), angular=Vector3(0.0, 0.0, 0.0))
         )
 
     def detect_bump(self, msg):
@@ -75,7 +75,7 @@ class SquareDance(object):
             self.running = True
     
     def get_angle(self):
-        return -self.starting_orientation[2]
+        return -self.orientation[2]
 
     def transform_to_odom(self, destination_base_link):
         theta = self.get_angle()
@@ -92,22 +92,21 @@ class SquareDance(object):
 
     def go_forward(self, distance=1.0):
         r = rospy.Rate(50)
-        destination_odom = self.transform_to_odom(np.array([1.0, 0.0, 0.0]))
+        destination_odom = self.transform_to_odom(np.array([distance, 0.0, 0.0]))
         print destination_odom
+
+        move_starting_position = self.position
 
         while not rospy.is_shutdown() and self.running:
             print self.position
             self.publish_destination(destination_odom[0, 0], destination_odom[0, 1], destination_odom[0, 2])
-            if self.distance_to(self.starting_position) < 1.0:
+            if self.distance_to(move_starting_position) < distance:
                 fwd_msg = Twist(linear=Vector3(1.0, 0.0, 0.0))
                 self.publisher.publish(fwd_msg)
             else:
                 self.stop()
                 return
             r.sleep()
-
-    def is_turning_right(self, starting_angle, final_angle):
-        return final_angle - starting_angle > math.pi
 
     def delta_angle(self, a, b):
         return ((b - a) + math.pi) % (math.pi * 2.0) - math.pi
@@ -117,17 +116,16 @@ class SquareDance(object):
 
         starting_angle = self.get_angle()
         final_angle = starting_angle + angle
-        direction = 1 if self.is_turning_right(starting_angle, final_angle) else -1
 
-        print('direction is ' + str(direction))
         print('starting angle is ' + str(starting_angle))
         print('final angle is ' + str(final_angle))
 
-
-
         while not rospy.is_shutdown() and self.running:
-            if self.delta_angle(self.get_angle(), final_angle) >= math.pi / 16.0:
-                turn_msg = Twist(angular=Vector3(0.0, 0.0, direction))
+            delta = self.delta_angle(self.get_angle(), final_angle)
+            print('delta angle' + str(delta))
+            print('get_angle ' + str(self.get_angle()))
+            if abs(delta) >= math.pi / 100.0:
+                turn_msg = Twist(angular=Vector3(0.0, 0.0, -delta * 1.0))
                 self.publisher.publish(turn_msg)
             else:
                 self.stop()
@@ -143,8 +141,10 @@ class SquareDance(object):
         while not self.running:
             r.sleep()
 
-        self.go_forward()
-        self.rotate(math.pi / 2.0)
+        for i in range(4):
+            self.go_forward(distance=0.5)
+            self.rotate(-math.pi / 2.0)
+
         
         print('done!')
 
