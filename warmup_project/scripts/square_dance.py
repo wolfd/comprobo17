@@ -1,89 +1,121 @@
 #!/usr/bin/env python2
 
-from geometry_msgs.msg import Twist, Vector3
+from geometry_msgs.msg import Twist, Vector3, PointStamped, Point
+from std_msgs.msg import Header
 from nav_msgs.msg import Odometry
 from neato_node.msg import Bump
 import numpy as np
 import tf
+import math
+
 
 import rospy
 
 class SquareDance(object):
-	def __init__(self):
-		super(SquareDance, self).__init__()
-		self.left_front_triggered = 0
-		self.right_front_triggered = 0
+    def __init__(self):
+        super(SquareDance, self).__init__()
+        self.left_front_triggered = 0
+        self.right_front_triggered = 0
 
-		self.position = None
-		self.orientation = None
+        self.position = None
+        self.orientation = None
 
-		self.starting_position = None
-		self.starting_orientation = None
+        self.starting_position = None
+        self.starting_orientation = None
 
-		self.running = False
+        self.running = False
 
-		rospy.init_node('square_dance')
+        rospy.init_node('square_dance')
 
-		rospy.Subscriber('/bump', Bump, self.detect_bump)
-		rospy.Subscriber('/odom', Odometry, self.update_odometry)
-		self.publisher = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
+        rospy.Subscriber('/bump', Bump, self.detect_bump)
+        rospy.Subscriber('/odom', Odometry, self.update_odometry)
+        self.publisher = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
 
-		rospy.on_shutdown(self.stop)
+        self.destination_publisher = rospy.Publisher('/destination', PointStamped, queue_size=10)
 
-	def convert_to_euler(self, x, y, z, w):
-		quaternion = (x, y, z, w)
-		euler = tf.transformations.euler_from_quaternion(quaternion)
-		roll = euler[0]
-		pitch = euler[1]
-		yaw = euler[2]
-		return np.array([roll, pitch, yaw])
+        rospy.on_shutdown(self.stop)
 
-	def stop(self):
-		self.publisher.publish(
-			Twist(linear=Vector3(0.0, 0.0, 0.0))
-		)
+    def publish_destination(self, x, y, z):
+        self.destination_publisher.publish(
+            PointStamped(
+                header=Header(stamp=rospy.Time.now(), frame_id='odom'),
+                point=Point(x, y, z)
+            )
+        )
 
-	def detect_bump(self, msg):
-		self.left_front_triggered = msg.leftFront
-		self.right_front_triggered = msg.rightFront
+    def convert_to_euler(self, x, y, z, w):
+        quaternion = (x, y, z, w)
+        euler = tf.transformations.euler_from_quaternion(quaternion)
+        roll = euler[0]
+        pitch = euler[1]
+        yaw = euler[2]
+        return np.array([roll, pitch, yaw])
 
-	def update_odometry(self, msg):
-		if self.position is None or self.orientation is None:
-			pos = msg.pose.pose.position
-			self.starting_position = np.array([pos.x, pos.y, pos.z])
-			quat = msg.pose.pose.orientation
-			self.starting_orientation = self.convert_to_euler(quat.x, quat.y, quat.z, quat.w)
-		current_pos = msg.pose.pose.position
-		self.position = np.array([current_pos.x, current_pos.y, current_pos.z]) - self.starting_position
-		current_quat = msg.pose.pose.orientation
-		self.orientation = self.convert_to_euler(current_quat.x, current_quat.y, current_quat.z, current_quat.w)
+    def stop(self):
+        self.publisher.publish(
+            Twist(linear=Vector3(0.0, 0.0, 0.0))
+        )
 
-		if not self.running:
-			self.running = True
-	
-	def basic_version():
-		pass
+    def detect_bump(self, msg):
+        self.left_front_triggered = msg.leftFront
+        self.right_front_triggered = msg.rightFront
 
-	def run(self):
-		r = rospy.Rate(50)
-		while not self.running:
-			r.sleep()
+    def update_odometry(self, msg):
+        if self.position is None or self.orientation is None:
+            pos = msg.pose.pose.position
+            self.starting_position = np.array([pos.x, pos.y, pos.z])
+            quat = msg.pose.pose.orientation
+            self.starting_orientation = self.convert_to_euler(quat.x, quat.y, quat.z, quat.w)
+        current_pos = msg.pose.pose.position
+        self.position = np.array([current_pos.x, current_pos.y, current_pos.z])
+        current_quat = msg.pose.pose.orientation
+        self.orientation = self.convert_to_euler(current_quat.x, current_quat.y, current_quat.z, current_quat.w)
+
+        if not self.running:
+            self.running = True
+    
+    def transform_to_odom(self, destination_base_link):
+        theta = -self.starting_orientation[2]
+        print theta
+        rot = np.matrix([[np.cos(theta), -1*np.sin(theta), 0],
+                        [np.sin(theta) ,    np.cos(theta), 0], 
+                        [0             ,  0              , 1]])
+        # Should this be position or starting position?
+        destination_odom = np.matrix(destination_base_link) * rot + self.position
+        return destination_odom
+
+    def distance_to(self, point):
+        return np.linalg.norm(point - self.position)
+
+    def run(self):
+        r = rospy.Rate(50)
+        # Wait for the first odometry position update to come in
+        while not self.running:
+            r.sleep()
+
+        destination_odom = self.transform_to_odom(np.array([1.0, 0.0, 0.0]))
+        print destination_odom
+
+        while not rospy.is_shutdown() and self.running:
+            print destination_odom
+            flattened_destination = destination_odom.squeeze()
+            print flattened_destination
+            self.publish_destination(destination_odom[0, 0], destination_odom[0, 1], destination_odom[0, 2])
+            print self.position
+            print self.distance_to(destination_odom)
+            if self.distance_to(self.starting_position) < 1.0:
+                fwd_msg = Twist(linear=Vector3(1.0, 0.0, 0.0))
+                self.publisher.publish(fwd_msg)
+            else:
+                self.stop()
 
 
-		while not rospy.is_shutdown() and self.running:
-			if self.position[0] < 1.0:
-				fwd_msg = Twist(linear=Vector3(1.0, 0.0, 0.0))
-				self.publisher.publish(fwd_msg)
-			else:
-				self.stop()
+            #if self.left_front_triggered == 1 or self.right_front_triggered == 1:
+            #   self.running = False
 
-
-			#if self.left_front_triggered == 1 or self.right_front_triggered == 1:
-			#	self.running = False
-
-			print(self.position, self.orientation)
-			r.sleep()
-		
-		self.stop()
+            # print(self.position, self.orientation)
+            r.sleep()
+        
+        self.stop()
 
 SquareDance().run()
